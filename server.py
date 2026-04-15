@@ -118,6 +118,76 @@ async def call_tool(name: str, arguments: dict):
 
 
 # ── Transcribe ─────────────────────────────────────────────────
+MAX_CHUNK_SIZE = 24 * 1024 * 1024  # 24 MB (safe margin under Whisper's 25 MB limit)
+CHUNK_DURATION = 600  # 10 minutes per chunk for long audio
+
+
+def _split_audio(file_path: str) -> list[str]:
+    """Split audio into chunks using ffmpeg. Returns list of chunk file paths."""
+    import tempfile
+    chunk_dir = tempfile.mkdtemp(prefix="stt-chunks-")
+
+    # Get duration
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "csv=p=0", file_path],
+        capture_output=True, text=True, timeout=10,
+    )
+    try:
+        duration = float(probe.stdout.strip())
+    except (ValueError, AttributeError):
+        duration = 0
+
+    if duration <= 0:
+        return [file_path]  # Can't determine duration, try as-is
+
+    # If short enough, no need to split
+    file_size = os.path.getsize(file_path)
+    if file_size <= MAX_CHUNK_SIZE and duration <= CHUNK_DURATION:
+        return [file_path]
+
+    # Split into chunks
+    chunks = []
+    offset = 0
+    idx = 0
+    while offset < duration:
+        chunk_path = os.path.join(chunk_dir, f"chunk-{idx:03d}.wav")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", file_path, "-ss", str(offset),
+             "-t", str(CHUNK_DURATION), "-ar", "16000", "-ac", "1",
+             "-f", "wav", chunk_path],
+            capture_output=True, timeout=120,
+        )
+        if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
+            chunks.append(chunk_path)
+        offset += CHUNK_DURATION
+        idx += 1
+
+    return chunks if chunks else [file_path]
+
+
+def _transcribe_single(file_path: str, language: str = "") -> str:
+    """Transcribe a single audio file via Whisper API."""
+    cmd = [
+        "curl", "-s", "-X", "POST",
+        f"{WHISPER_URL}/v1/audio/transcriptions",
+        "-F", f"file=@{file_path}",
+        "-F", "model=whisper-1",
+        "-F", "response_format=json",
+    ]
+    if language:
+        cmd.extend(["-F", f"language={language}"])
+
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=TRANSCRIBE_TIMEOUT
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Whisper error: {result.stderr}")
+
+    data = json.loads(result.stdout)
+    return data.get("text", "").strip()
+
+
 async def do_transcribe(args: dict):
     file_path = args["file_path"]
     language = args.get("language", "")
@@ -129,34 +199,32 @@ async def do_transcribe(args: dict):
     if file_size == 0:
         return [TextContent(type="text", text="Audio file is empty (0 bytes)")]
 
-    cmd = [
-        "curl", "-s", "-X", "POST",
-        f"{WHISPER_URL}/v1/audio/transcriptions",
-        "-F", f"file=@{file_path}",
-        "-F", "model=whisper-1",
-        "-F", "response_format=json",
-    ]
-    if language:
-        cmd.extend(["-F", f"language={language}"])
-
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=TRANSCRIBE_TIMEOUT
-        )
-        if result.returncode != 0:
-            return [TextContent(type="text", text=f"Whisper error: {result.stderr}")]
+        chunks = _split_audio(file_path)
+        is_chunked = len(chunks) > 1
 
-        data = json.loads(result.stdout)
-        text = data.get("text", "").strip()
-        if not text:
+        transcripts = []
+        for i, chunk in enumerate(chunks):
+            text = _transcribe_single(chunk, language)
+            if text:
+                transcripts.append(text)
+
+        # Clean up temp chunks
+        if is_chunked:
+            import shutil
+            chunk_dir = os.path.dirname(chunks[0])
+            if chunk_dir.startswith("/tmp/"):
+                shutil.rmtree(chunk_dir, ignore_errors=True)
+
+        if not transcripts:
             return [TextContent(type="text", text="(No speech detected in audio)")]
 
-        return [TextContent(type="text", text=text)]
-    except json.JSONDecodeError:
-        return [TextContent(
-            type="text",
-            text=f"Unexpected Whisper response: {result.stdout[:200]}",
-        )]
+        full_text = " ".join(transcripts)
+        meta = f"[{len(chunks)} chunks]" if is_chunked else ""
+        return [TextContent(type="text", text=f"{meta} {full_text}".strip())]
+
+    except json.JSONDecodeError as e:
+        return [TextContent(type="text", text=f"Unexpected Whisper response: {e}")]
     except subprocess.TimeoutExpired:
         return [TextContent(
             type="text",
