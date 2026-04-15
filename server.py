@@ -36,6 +36,73 @@ DEFAULT_SPEED = float(os.environ.get("DEFAULT_SPEED", "1.0"))
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# ── Circuit breaker ──────────────────────────────────────────
+# Tracks endpoint health to avoid waiting for timeouts on dead endpoints.
+import time as _time
+
+HEALTH_CHECK_INTERVAL = 30  # seconds between periodic health checks
+UNHEALTHY_COOLDOWN = 60     # seconds to skip a failed endpoint before retrying
+
+_endpoint_health: dict[str, dict] = {}
+# { url: { "healthy": bool, "last_check": float, "last_fail": float } }
+
+
+def _check_health_sync(url: str, keyword: str) -> bool:
+    """Quick health check with 3s timeout."""
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "--max-time", "3", f"{url}/health"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.returncode == 0 and keyword in r.stdout.lower()
+    except Exception:
+        return False
+
+
+def _is_endpoint_healthy(url: str, keyword: str) -> bool:
+    """Check if endpoint is healthy, using cached status when fresh enough."""
+    if not url:
+        return False
+    now = _time.time()
+    state = _endpoint_health.get(url)
+
+    if state:
+        # If recently marked unhealthy, skip without checking
+        if not state["healthy"] and (now - state["last_fail"]) < UNHEALTHY_COOLDOWN:
+            return False
+        # If recently checked and healthy, trust the cache
+        if state["healthy"] and (now - state["last_check"]) < HEALTH_CHECK_INTERVAL:
+            return True
+
+    # Actually check
+    healthy = _check_health_sync(url, keyword)
+    _endpoint_health[url] = {
+        "healthy": healthy,
+        "last_check": now,
+        "last_fail": now if not healthy else (state["last_fail"] if state else 0),
+    }
+    return healthy
+
+
+def _mark_unhealthy(url: str):
+    """Mark an endpoint as unhealthy after a request failure."""
+    now = _time.time()
+    state = _endpoint_health.get(url, {"healthy": True, "last_check": now, "last_fail": 0})
+    state["healthy"] = False
+    state["last_fail"] = now
+    _endpoint_health[url] = state
+
+
+def _pick_endpoint(primary: str, fallback: str, keyword: str) -> str:
+    """Pick the best endpoint: primary if healthy, fallback otherwise."""
+    if _is_endpoint_healthy(primary, keyword):
+        return primary
+    if fallback and _is_endpoint_healthy(fallback, keyword):
+        return fallback
+    # Both unknown or unhealthy — try primary anyway
+    return primary
+
+
 # ── Voice auto-selection ──────────────────────────────────────
 # Maps language prefixes to default voices per TTS backend
 VOICE_MAP = {
@@ -154,19 +221,24 @@ async def call_tool(name: str, arguments: dict):
 
 
 # ── Fallback helper ───────────────────────────────────────────
-def _try_with_fallback(run_fn, primary_url: str, fallback_url: str, label: str):
-    """Try run_fn with primary URL, fall back to fallback URL on failure."""
+def _try_with_fallback(run_fn, primary_url: str, fallback_url: str, health_keyword: str):
+    """Pick the best endpoint via circuit breaker, try it, fall back if needed."""
+    chosen = _pick_endpoint(primary_url, fallback_url, health_keyword)
+    other = fallback_url if chosen == primary_url else primary_url
+
     try:
-        result = run_fn(primary_url)
-        return result, primary_url
-    except Exception as primary_err:
-        if not fallback_url:
+        result = run_fn(chosen)
+        return result, chosen
+    except Exception as first_err:
+        _mark_unhealthy(chosen)
+        if not other:
             raise
         try:
-            result = run_fn(fallback_url)
-            return result, fallback_url
+            result = run_fn(other)
+            return result, other
         except Exception:
-            raise primary_err  # Report the primary error
+            _mark_unhealthy(other)
+            raise first_err
 
 
 # ── Transcribe ─────────────────────────────────────────────────
@@ -268,7 +340,7 @@ async def do_transcribe(args: dict):
                 return _transcribe_single_with_url(chunk, language, url)
 
             text, used_url = _try_with_fallback(
-                run_transcribe, WHISPER_URL, WHISPER_URL_FALLBACK, "STT"
+                run_transcribe, WHISPER_URL, WHISPER_URL_FALLBACK, "ok"
             )
             if text:
                 transcripts.append(text)
@@ -342,7 +414,7 @@ async def do_speak(args: dict):
 
     try:
         _, used_url = _try_with_fallback(
-            run_speak, KOKORO_URL, KOKORO_URL_FALLBACK, "TTS"
+            run_speak, KOKORO_URL, KOKORO_URL_FALLBACK, "healthy"
         )
         size_kb = os.path.getsize(out_file) / 1024
         lang = _detect_language(text)
