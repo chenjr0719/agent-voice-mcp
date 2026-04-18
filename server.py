@@ -196,6 +196,16 @@ async def list_tools():
                             f"Speech speed 0.5-2.0 (default: {DEFAULT_SPEED})"
                         ),
                     },
+                    "leading_pad_ms": {
+                        "type": "integer",
+                        "description": "Milliseconds of silence prepended to the audio (default: 0).",
+                        "default": 0,
+                    },
+                    "trailing_pad_ms": {
+                        "type": "integer",
+                        "description": "Milliseconds of silence appended to the audio (default: 0).",
+                        "default": 0,
+                    },
                 },
                 "required": ["text"],
             },
@@ -380,6 +390,8 @@ async def do_speak(args: dict):
     text = args["text"]
     voice = _resolve_voice(args.get("voice"), text)
     speed = args.get("speed", DEFAULT_SPEED)
+    leading_pad_ms = int(args.get("leading_pad_ms") or 0)
+    trailing_pad_ms = int(args.get("trailing_pad_ms") or 0)
 
     if not text.strip():
         return [TextContent(type="text", text="No text provided")]
@@ -416,6 +428,20 @@ async def do_speak(args: dict):
         _, used_url = _try_with_fallback(
             run_speak, KOKORO_URL, KOKORO_URL_FALLBACK, "healthy"
         )
+
+        if leading_pad_ms > 0 or trailing_pad_ms > 0:
+            filters = []
+            if leading_pad_ms > 0:
+                filters.append(f"adelay={leading_pad_ms}:all=1")
+            if trailing_pad_ms > 0:
+                filters.append(f"apad=pad_dur={trailing_pad_ms / 1000:.3f}")
+            padded = out_file[:-4] + "-p.mp3"
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", out_file, "-af", ",".join(filters), padded],
+                capture_output=True, timeout=30, check=True,
+            )
+            os.replace(padded, out_file)
+
         size_kb = os.path.getsize(out_file) / 1024
         lang = _detect_language(text)
         fallback_note = " (fallback)" if used_url != KOKORO_URL else ""
