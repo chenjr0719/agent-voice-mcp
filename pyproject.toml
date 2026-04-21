@@ -1,11 +1,11 @@
 [project]
-name = "stt-tts-mcp"
+name = "agent-voice-mcp"
 version = "1.0.0"
-description = "Local STT/TTS MCP Server for Claude Code — file-based transcription and speech synthesis"
+description = "Local Voice MCP Server for Claude Code — file-based transcription and speech synthesis"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = ["mcp>=1.0.0"]
 
 [project.scripts]
-stt-tts-mcp = "server:main"
+agent-voice-mcp = "server:main"

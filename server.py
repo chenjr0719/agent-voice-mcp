@@ -1,5 +1,5 @@
 """
-Local STT/TTS MCP Server
+Agent Voice MCP Server
 
 File-based speech-to-text and text-to-speech tools for Claude Code,
 powered by Whisper (STT) and OpenAI-compatible TTS (Kokoro/Piper).
@@ -26,8 +26,8 @@ WHISPER_URL_FALLBACK = os.environ.get("WHISPER_URL_FALLBACK", "")
 KOKORO_URL = os.environ.get("KOKORO_URL", "http://localhost:8880")
 KOKORO_URL_FALLBACK = os.environ.get("KOKORO_URL_FALLBACK", "")
 OUTPUT_DIR = os.environ.get(
-    "STT_TTS_OUTPUT_DIR",
-    os.path.join(os.path.expanduser("~"), ".stt-tts-mcp", "output"),
+    "VOICE_OUTPUT_DIR",
+    os.path.join(os.path.expanduser("~"), ".agent-voice-mcp", "output"),
 )
 TRANSCRIBE_TIMEOUT = int(os.environ.get("TRANSCRIBE_TIMEOUT", "120"))
 SPEAK_TIMEOUT = int(os.environ.get("SPEAK_TIMEOUT", "60"))
@@ -134,7 +134,7 @@ def _resolve_voice(voice: str | None, text: str) -> str:
 
 
 # ── MCP Server ─────────────────────────────────────────────────
-app = Server("stt-tts")
+app = Server("voice")
 
 
 @app.list_tools()

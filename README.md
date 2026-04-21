@@ -1,4 +1,4 @@
-# stt-tts-mcp
+# agent-voice-mcp
 
 Local Speech-to-Text and Text-to-Speech MCP Server for Claude Code.
 
@@ -40,10 +40,10 @@ Add to your `~/.claude.json`:
 ```json
 {
   "mcpServers": {
-    "stt-tts": {
+    "voice": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/stt-tts-mcp", "python", "server.py"],
+      "args": ["run", "--directory", "/path/to/agent-voice-mcp", "python", "server.py"],
       "env": {
         "WHISPER_URL": "http://localhost:2022",
         "KOKORO_URL": "http://localhost:8880"
@@ -58,10 +58,10 @@ Or with a virtual environment:
 ```json
 {
   "mcpServers": {
-    "stt-tts": {
+    "voice": {
       "type": "stdio",
-      "command": "/path/to/stt-tts-mcp/.venv/bin/python",
-      "args": ["/path/to/stt-tts-mcp/server.py"],
+      "command": "/path/to/agent-voice-mcp/.venv/bin/python",
+      "args": ["/path/to/agent-voice-mcp/server.py"],
       "env": {
         "WHISPER_URL": "http://localhost:2022",
         "KOKORO_URL": "http://localhost:8880"
@@ -74,7 +74,7 @@ Or with a virtual environment:
 ### 3. Install Dependencies
 
 ```bash
-cd stt-tts-mcp
+cd agent-voice-mcp
 uv venv && uv pip install mcp
 ```
 
@@ -100,7 +100,7 @@ transcribe(file_path="/path/to/chinese.mp3", language="zh")
 
 ### `speak`
 
-Convert text to speech using local Kokoro TTS.
+Convert text to speech using local TTS.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -118,7 +118,7 @@ Convert text to speech using local Kokoro TTS.
 **Example:**
 ```
 speak(text="Hello, world!")
-→ "Audio saved: ~/.stt-tts-mcp/output/tts-1234567890.mp3 (42.3 KB)"
+→ "Audio saved: ~/.agent-voice-mcp/output/tts-1234567890.mp3 (42.3 KB)"
 ```
 
 ### `health`
@@ -139,7 +139,7 @@ All configuration via environment variables:
 |----------|---------|-------------|
 | `WHISPER_URL` | `http://localhost:2022` | Whisper.cpp server URL |
 | `KOKORO_URL` | `http://localhost:8880` | Kokoro TTS server URL |
-| `STT_TTS_OUTPUT_DIR` | `~/.stt-tts-mcp/output` | Directory for generated audio files |
+| `VOICE_OUTPUT_DIR` | `~/.agent-voice-mcp/output` | Directory for generated audio files |
 | `TRANSCRIBE_TIMEOUT` | `120` | Transcription timeout in seconds |
 | `SPEAK_TIMEOUT` | `60` | TTS timeout in seconds |
 | `DEFAULT_VOICE` | `af_sky` | Default TTS voice |
