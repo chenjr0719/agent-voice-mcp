@@ -13,5 +13,5 @@ jobs:
     steps:
       - uses: actions/add-to-project@v2.0.0
         with:
-          project-url: https://github.com/users/chenjr0719/projects/1
+          project-url: https://github.com/users/chenjr0719/projects/4
           github-token: ${{ secrets.PAT }}
